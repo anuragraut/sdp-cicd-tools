@@ -1,0 +1,7 @@
+---
+- name: Install oracle db
+  hosts: oracle
+  gather_facts: no
+  become: yes
+  roles:
+    - install-oracle-mockup-server

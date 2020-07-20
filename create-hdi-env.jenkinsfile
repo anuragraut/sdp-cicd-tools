@@ -1,0 +1,82 @@
+//Jenkins pipeline to provision HDInsight infrastructure
+def azureSubscription = ""
+def inputSubscription = ""
+def skipRemainingStages = "true"
+
+pipeline {
+    agent any
+    parameters{
+        choice(name: 'subscription', choices: 'Project Azure governance testing\nNon-Prod Data and Processing\nProd Data and Processing\nProject CPD\nProject UPC Cablecom - Digital Roadmap\nProject VMIE - Digital Roadmap', description: 'Subscription to provision')
+        choice(name: 'data_domain', choices: 'Please select\ndp\nautomation\naccess\nmonitoring', description: 'Data Domain')
+        choice(name: 'resource_group_phase', choices: 'Please select\npiimgmt\ncuration\ndatalake\nintegration\ningestion\nshared', description: 'Resourcegroup Phase')
+        string(name: 'project_name', defaultValue:'', description: 'Specify project name')
+        string(name: 'cluster_name', defaultValue:'', description: 'Specify cluster name')
+        choice(name: 'env_type', choices: 'Please select\ndev\nsit\nuat\nprd', description: 'Environment type to provision')
+        string(name: 'project_description', defaultValue:'', description: 'Specify project description')
+        choice(name: 'country', choices: 'Please select\nnl\nch\nie\nde\nat', description: 'Select Country')
+        choice(name: 'unit', choices: 'Please select\nconsumeranalytics\ndatacentertechnology\ndatasolutions\nitsecurity\nsupplychain', description: 'Select Unit')
+        booleanParam(defaultValue: false, name: 'oozie_db', description: 'Provision an Oozie database')
+        booleanParam(defaultValue: false, name: 'hive_db', description: 'Provision a Hive database')
+        booleanParam(defaultValue: false, name: 'ranger_db', description: 'Provision a Ranger database')
+    }
+
+    environment {
+        master_project_name = "${data_domain}-${resource_group_phase}-${project_name}-${env_type}"
+        job_type = "jenkinsfile_hdi.j2"
+            }
+
+    stages {
+        stage('set subscription id') {
+            steps {
+                script {
+                    if (cluster_name.length() > 4)
+                    { env.short_cluster_name = cluster_name.substring(0, cluster_name.length() - 3)}
+                    else { error("cluster_name must be > 4") }
+                    // Please add subscription_id + credentials as per below if needed
+                    if (subscription.toString()=='Project Azure governance testing')
+                    {env.CREDENTIAL_ID = 'SPAzureGovernanceTesting'}
+                    else if(subscription.toString()=='Non-Prod Data and Processing')
+                    {env.CREDENTIAL_ID = 'SPNonProdDataAndProcessing'}
+                    else if (subscription.toString()=='Prod Data and Processing')
+                    {env.CREDENTIAL_ID = 'SPProdDataAndProcessing'}
+                    else if (subscription.toString()=='Project UPC Cablecom - Digital Roadmap')
+                    {env.CREDENTIAL_ID = 'SPUPCCablecom'}
+                    else if (subscription.toString()=='Project VMIE - Digital Roadmap')
+                    {env.CREDENTIAL_ID = 'SPIEDigitalRoadmap'}
+                    else {env.CREDENTIAL_ID = 'SPCpd'}
+                    
+
+                }
+            }
+        }
+        stage ('Git checkout and switch to Master') {
+            steps {
+                sh 'git checkout --track origin/master'
+            }
+        }
+
+        stage ('Create HDI environment configuration') {
+            steps {
+            withCredentials([azureServicePrincipal(credentialsId: "${env.CREDENTIAL_ID}" ,
+                                                  subscriptionIdVariable: 'AZURE_SUBSCRIPTION_ID',
+                                                  clientIdVariable: 'AZURE_CLIENT_ID',
+                                                  clientSecretVariable: 'AZURE_SECRET',
+                                                  tenantIdVariable: 'AZURE_TENANT')]) {
+                 ansiblePlaybook playbook: 'playbooks/create-new-environment.yml', skippedTags: 'dataproject,maintain'
+                 }
+            }
+        }
+
+        stage ('Provision HDI Infrastructure') {
+            steps {
+                withCredentials([azureServicePrincipal(credentialsId: "${env.CREDENTIAL_ID}" ,
+                        subscriptionIdVariable: 'AZURE_SUBSCRIPTION_ID',
+                        clientIdVariable: 'AZURE_CLIENT_ID',
+                        clientSecretVariable: 'AZURE_SECRET',
+                        tenantIdVariable: 'AZURE_TENANT')]) {
+                    ansiblePlaybook extras: "-e @environments/'${master_project_name}'/all", playbook: 'playbooks/provision-virtual-environment.yml', skippedTags: 'dataproject'
+                }
+            }
+        }
+    }
+}
